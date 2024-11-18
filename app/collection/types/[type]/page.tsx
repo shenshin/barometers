@@ -6,8 +6,9 @@ import { BarometerCard } from './components/barometer-card'
 import { slug } from '@/utils/misc'
 import { SortValue } from './types'
 import Sort from './sort'
-import { fetchBarometers, fetchTypes } from '@/utils/fetch'
 import { DescriptionText } from '@/app/components/description-text'
+import { getType, listTypes } from '@/actions/barometer-types'
+import { listBarometers } from '@/actions/barometers'
 import { title, openGraph, twitter } from '@/app/metadata'
 
 interface CollectionProps {
@@ -20,8 +21,8 @@ interface CollectionProps {
 }
 
 export async function generateMetadata({ params: { type } }: CollectionProps): Promise<Metadata> {
-  const { description } = await fetchTypes({ type })
-  const barometersOfType = await fetchBarometers({ type, limit: '5' })
+  const { description } = await getType(type)
+  const barometersOfType = await listBarometers({ type, limit: 5 })
   const collectionTitle = `${title}: ${capitalize(type)} Barometers Collection`
   const barometerImages = barometersOfType
     .filter(({ images }) => images && images.length > 0)
@@ -50,10 +51,10 @@ export async function generateMetadata({ params: { type } }: CollectionProps): P
 }
 
 export default async function Collection({ params: { type }, searchParams }: CollectionProps) {
-  const sortBy = searchParams.sort ?? 'date'
-  const barometersOfType = await fetchBarometers({ type, sort: sortBy })
+  const sort = searchParams.sort ?? 'date'
+  const barometersOfType = await listBarometers({ type, sort })
   // selected barometer type details
-  const { description } = await fetchTypes({ type })
+  const { description } = await getType(type)
   return (
     <Container py="xl" size="xl">
       <Stack gap="xs">
@@ -61,11 +62,12 @@ export default async function Collection({ params: { type }, searchParams }: Col
           {type}
         </Title>
         {description && <DescriptionText size="sm" description={description} />}
-        <Sort sortBy={sortBy} style={{ alignSelf: 'flex-end' }} />
+        <Sort sortBy={sort} style={{ alignSelf: 'flex-end' }} />
         <Grid justify="center" gutter="xl">
-          {barometersOfType.map(({ name, _id, images, manufacturer }) => (
+          {barometersOfType.map(({ name, _id, images, manufacturer }, i) => (
             <GridCol span={{ base: 6, xs: 3, lg: 3 }} key={String(_id)}>
               <BarometerCard
+                priority={i < 8}
                 image={googleStorageImagesFolder + images![0]}
                 name={name}
                 link={barometerRoute + slug(name)}
@@ -80,7 +82,7 @@ export default async function Collection({ params: { type }, searchParams }: Col
 }
 
 export async function generateStaticParams() {
-  const barometerTypes = await fetchTypes()
+  const barometerTypes = await listTypes()
   return barometerTypes.map(({ name }) => ({
     type: name.toLowerCase(),
   }))

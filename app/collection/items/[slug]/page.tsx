@@ -15,7 +15,7 @@ import { ConditionEdit } from './components/edit-fields/condition-edit'
 import { ManufacturerEdit } from './components/edit-fields/manufacturer-edit'
 import { BreadcrumbsComponent } from './components/breadcrumbs'
 import sx from './styles.module.scss'
-import { fetchBarometers } from '@/utils/fetch'
+import { getBarometer, listBarometers } from '@/actions/barometers'
 import DimensionEdit from './components/edit-fields/dimensions-edit'
 import { slug as slugify } from '@/utils/misc'
 import { DescriptionText } from '@/app/components/description-text'
@@ -31,7 +31,7 @@ interface BarometerItemProps {
 export async function generateMetadata({
   params: { slug },
 }: BarometerItemProps): Promise<Metadata> {
-  const { description, name, images } = await fetchBarometers(slug)
+  const { description, name, images } = await getBarometer(slug)
   const barometerTitle = `${title}: ${capitalize(name)}`
   const barometerImages =
     images &&
@@ -67,7 +67,7 @@ export async function generateMetadata({
  * to be used as static parameters for Next.js static generation.
  */
 export async function generateStaticParams(): Promise<Slug[]> {
-  const barometers = await fetchBarometers()
+  const barometers = await listBarometers()
   return barometers.map(({ slug, name }) => ({
     slug: slug ?? slugify(name),
   }))
@@ -86,7 +86,7 @@ async function isAuthorized(): Promise<boolean> {
 export default async function BarometerItem({ params: { slug } }: BarometerItemProps) {
   try {
     const isAdmin = await isAuthorized()
-    const barometer: IBarometer = await fetchBarometers(slug)
+    const barometer: IBarometer = await getBarometer(slug)
     const { name, images, description, manufacturer, dating, dimensions, condition, collectionId } =
       barometer
 

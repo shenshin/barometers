@@ -135,4 +135,5 @@ dist
 public/uploads
 .vercel
 
+# webstorrm
 .idea
