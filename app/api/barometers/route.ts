@@ -5,52 +5,34 @@ import Barometer, { IBarometer } from '@/models/barometer'
 import BarometerType from '@/models/type'
 import '@/models/condition'
 import Manufacturer from '@/models/manufacturer'
-import { cleanObject, slug as slugify, parseDate } from '@/utils/misc'
+import { cleanObject, slug as slugify } from '@/utils/misc'
 import { SortValue } from '@/app/collection/types/[type]/types'
+import { DEFAULT_PAGE_SIZE, type PaginationDTO } from '../types'
 
-// dependencies to include in resulting barometers array
-const deps = ['type', 'condition', 'manufacturer']
-
-/**
- * Sort barometer list by one of the parameters: manufacturer, name, date or catalogue no.
- */
-function sortBarometers(barometers: IBarometer[], sortBy: SortValue | null): IBarometer[] {
-  return barometers.toSorted((a, b) => {
-    switch (sortBy) {
-      case 'manufacturer':
-        return (a.manufacturer?.name ?? '').localeCompare(b.manufacturer?.name ?? '')
-      case 'name':
-        return a.name.localeCompare(b.name)
-      case 'date': {
-        if (!a.dating || !b.dating) return 0
-        const yearA = parseDate(a.dating)?.[0]
-        const yearB = parseDate(b.dating)?.[0]
-        if (!yearA || !yearB) return 0
-        const dateA = new Date(yearA, 0, 1).getTime()
-        const dateB = new Date(yearB, 0, 1).getTime()
-        return dateA - dateB
-      }
-      case 'cat-no':
-        return a.collectionId.localeCompare(b.collectionId)
-      default:
-        return 0
-    }
-  })
-}
-
-/**
- * Search barometers matching a query
- */
-async function searchBarometers(query: string) {
-  const quotedQuery = `"${query}"`
-  const barometers = await Barometer.find({ $text: { $search: quotedQuery } }).populate(deps)
-  return NextResponse.json(barometers, { status: 200 })
+function getSortCriteria(sortBy: SortValue | null): Record<string, 1 | -1> {
+  switch (sortBy) {
+    case 'manufacturer':
+      return { 'manufacturer.name': 1 }
+    case 'name':
+      return { name: 1 }
+    case 'date':
+      return { 'dating.year': 1 }
+    case 'cat-no':
+      return { collectionId: 1 }
+    default:
+      return { name: 1 }
+  }
 }
 
 /**
  * Find a list of barometers of a certain type
  */
-async function getBarometersByType(typeName: string, limit: number, sortBy: SortValue | null) {
+async function getBarometersByType(
+  typeName: string,
+  page: number,
+  pageSize: number,
+  sortBy: SortValue | null,
+) {
   // perform case-insensitive compare with the stored types
   const barometerType = await BarometerType.findOne({
     name: { $regex: new RegExp(`^${typeName}$`, 'i') },
@@ -58,20 +40,66 @@ async function getBarometersByType(typeName: string, limit: number, sortBy: Sort
   if (!barometerType) return NextResponse.json([], { status: 404 })
 
   // if existing barometer type match the `type` param, return all corresponding barometers
-  const barometers = sortBarometers(
-    await Barometer.find({ type: barometerType._id })
-      .limit(limit)
-      .populate(['type', 'condition', 'manufacturer']),
-    sortBy,
+  const skip = (page - 1) * pageSize
+  const sortCriteria = getSortCriteria(sortBy)
+
+  const barometers = await Barometer.aggregate([
+    {
+      $match: { type: barometerType._id },
+    },
+    {
+      $lookup: {
+        from: 'manufacturers',
+        localField: 'manufacturer',
+        foreignField: '_id',
+        as: 'manufacturer',
+      },
+    },
+    { $unwind: { path: '$manufacturer', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'barometerTypes',
+        localField: 'type',
+        foreignField: '_id',
+        as: 'type',
+      },
+    },
+    { $unwind: { path: '$type', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'barometerConditions',
+        localField: 'condition',
+        foreignField: '_id',
+        as: 'condition',
+      },
+    },
+    { $unwind: { path: '$condition', preserveNullAndEmptyArrays: true } },
+    {
+      $sort: sortCriteria,
+    },
+    { $skip: skip },
+    { $limit: pageSize },
+  ])
+
+  const totalItems = await Barometer.countDocuments({ type: barometerType._id })
+
+  return NextResponse.json<PaginationDTO>(
+    {
+      barometers,
+      page,
+      totalItems,
+      pageSize,
+      totalPages: Math.ceil(totalItems / pageSize),
+    },
+    { status: barometers.length > 0 ? 200 : 404 },
   )
-  return NextResponse.json(barometers, { status: barometers.length > 0 ? 200 : 404 })
 }
 
 /**
- * Find all barometers
+ * List all barometers
  */
-async function getAllBarometers(limit: number, sortBy: SortValue | null) {
-  const barometers = sortBarometers(await Barometer.find().limit(limit).populate(deps), sortBy)
+async function getAllBarometers() {
+  const barometers = await Barometer.find().populate(['type', 'condition', 'manufacturer'])
   return NextResponse.json(barometers, { status: 200 })
 }
 
@@ -86,14 +114,12 @@ export async function GET(req: NextRequest) {
     const { searchParams } = req.nextUrl
     const typeName = searchParams.get('type')
     const sortBy = searchParams.get('sort') as SortValue | null
-    const limit = Number(searchParams.get('limit')) ?? 0
-    const query = searchParams.get('q')
-    // query param was received: ?q=aneroid%20barometer
-    if (query) return await searchBarometers(query)
+    const size = Math.max(Number(searchParams.get('size')) || DEFAULT_PAGE_SIZE, 1)
+    const page = Math.max(Number(searchParams.get('page')) || 1, 1)
     // if `type` search param was not passed return all barometers list
-    if (!typeName || !typeName.trim()) return await getAllBarometers(limit, sortBy)
+    if (!typeName || !typeName.trim()) return await getAllBarometers()
     // type was passed
-    return await getBarometersByType(typeName, limit, sortBy)
+    return await getBarometersByType(typeName, page, size, sortBy)
   } catch (error) {
     return NextResponse.json(
       { message: error instanceof Error ? error.message : 'Could not retrieve barometer list' },
